@@ -1,5 +1,3 @@
-
-
 from math import pi, inf, sin, cos, atan2, sqrt
 from cozmo.faces import Face
 from cozmo.objects import CustomObject, LightCube
@@ -17,7 +15,7 @@ class WorldObject():
 
 class WallObj(WorldObject):
     def __init__(self, id=None, x=0, y=0, theta=0, length=100, height=150,
-                 door_width=75, door_height=105, doorways=[], ghost=False):
+                 door_width=75, door_height=105, doorways=[]):
         super().__init__(id,x,y)
         self.z = height/2
         self.theta = theta
@@ -26,7 +24,6 @@ class WallObj(WorldObject):
         self.door_width = door_width
         self.door_height = door_height
         self.doorways = doorways
-        self.ghost = ghost
 
     def __repr__(self):
         return '<WallObj %d: (%.1f,%.1f) @ %d deg. for %.1f>' % \
@@ -86,7 +83,7 @@ class FaceObj(WorldObject):
 
 class CameraObj(WorldObject):
     camera_size = (44., 44., 44.)
-    def __init__(self, id=None, x=0, y=0, z=0, theta=0, phi = 0, rotm = None, tvecs = None, calibration_number= None):
+    def __init__(self, id=None, x=0, y=0, z=0, theta=0, phi =0, initial_position = (0,0), cozmo_number = 1):
         super().__init__(id,x,y,z)
         self.size = self.camera_size
         self.id = id
@@ -95,16 +92,15 @@ class CameraObj(WorldObject):
         self.z = z
         self.theta = theta
         self.phi = phi
-        self.rotm = rotm
-        self.tvecs = tvecs
-        self.calibration_number=calibration_number
+        self.initial_position = initial_position
+        self.cozmo_number = cozmo_number
 
     def __repr__(self):
         return '<CameraObj %d: (%.1f, %.1f, %.1f) @ %f.> Calibrated on %d' % \
-               (self.id, self.x, self.y, self.z, self.phi*180/3.14, self.calibration_number)
+               (self.id, self.x, self.y, self.z, self.phi*180/3.14, self.cozmo_number)
 
 class RobotGhostObj(WorldObject):
-    def __init__(self, camera_id=None, cozmo_id=None, x=0, y=0, z=0, theta=0, is_visible=True, uncertainity=0, calibration_number = 1):
+    def __init__(self, camera_id=None, cozmo_id=None, x=0, y=0, z=0, theta=0, is_visible=True, uncertainity=0, cozmo_number = 1):
         super().__init__(id,x,y,z)
         self.camera_id = camera_id
         self.cozmo_id = cozmo_id
@@ -114,12 +110,12 @@ class RobotGhostObj(WorldObject):
         self.theta = theta
         self.uncertainity = uncertainity
         self.is_visible = is_visible
-        self.calibration_number = calibration_number
+        self.cozmo_number = cozmo_number
         self.size = (120., 70., 100.)
 
     def __repr__(self):
         return '<RobotGhostObj %d-%d: (%.1f, %.1f, %.1f) @ %f.> Calibrated on %d' % \
-               (self.camera_id, self.cozmo_id, self.x, self.y, self.z, self.theta*180/3.14, self.calibration_number)
+               (self.camera_id, self.cozmo_id, self.x, self.y, self.z, self.theta*180/3.14, self.cozmo_number)
 
     def update(self, x=0, y=0, z=0, theta=0, uncertainity=0):
         self.x = x
@@ -149,7 +145,6 @@ class WorldMap():
         self.objects = dict()
         self.temp_cams = dict()
         self.temp_ghosts = dict(dict())
-
         
     def update_map(self):
         """Called to update the map just before the path planner runs.
@@ -191,7 +186,7 @@ class WorldMap():
             wall_y = m_y + dist*sin(wall_orient-pi/2)
             return WallObj(id=wall_spec.id, x=wall_x, y=wall_y, theta=wall_orient,
                            length=wall_spec.length, height=wall_spec.height,
-                           door_height=wall_spec.door_height, doorways = wall_spec.doorways )
+                           door_height=wall_spec.door_height, doorways = wall_spec.doorways)
         
     def update_cube(self, cube):
         if cube.pose is None or not cube.pose.is_comparable(self.robot.pose):

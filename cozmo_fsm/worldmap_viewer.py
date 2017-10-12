@@ -333,6 +333,10 @@ class WorldMapViewer():
         widths = []
         last_x = -half_length
         edges = [ [0, -half_length, door_height/2, 1.] ]
+        if wall_obst.ghost:
+            color = color_gray
+        else:
+            color = color_red
         for (center,width) in wall_spec.doorways:
             left_edge = center - width/2 - half_length
             edges.append([0., left_edge, door_height/2, 1.])
@@ -353,7 +357,7 @@ class WorldMapViewer():
             glPushMatrix()
             glTranslatef(*center.flatten()[0:3])
             glRotatef(wall_obst.theta*180/pi, 0, 0, 1)
-            self.make_cube(size=dimensions, color=color_red)
+            self.make_cube(size=dimensions, color=color)
             glPopMatrix()
         # Make the transom
         glPushMatrix()
