@@ -1,0 +1,26 @@
+import cv2
+import socket
+import pickle
+import threading
+import random
+from numpy import arctan2, sqrt, pi
+from cozmo_fsm import *
+from pdb import set_trace
+
+class PRINT(StateNode):
+    def start(self,event=None):
+        super().start(event)
+        ghosts = dict(dict())
+        self.post_completion()
+
+
+class t(StateMachineProgram):
+    def start(self):
+        super().__init__(cam_viewer=False)
+        super().start()
+
+    $setup {
+        launch:  PRINT() =C=> launch
+    }
+
+

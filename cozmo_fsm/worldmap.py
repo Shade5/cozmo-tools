@@ -1,11 +1,10 @@
-
-
 from math import pi, inf, sin, cos, atan2, sqrt
 from cozmo.faces import Face
 from cozmo.objects import CustomObject, LightCube
 
 from . import transform
 from .transform import wrap_angle
+
 
 class WorldObject():
     def __init__(self, id=None, x=0, y=0, z=0, is_visible=False):
@@ -19,7 +18,7 @@ class WorldObject():
 
 class WallObj(WorldObject):
     def __init__(self, id=None, x=0, y=0, theta=0, length=100, height=150,
-                 door_width=75, door_height=105, doorways=[], ghost=False):
+                 door_width=75, door_height=105, markers=[]):
         super().__init__(id,x,y)
         self.z = height/2
         self.theta = theta
@@ -27,12 +26,19 @@ class WallObj(WorldObject):
         self.height = height
         self.door_width = door_width
         self.door_height = door_height
-        self.doorways = doorways
-        self.ghost = ghost
+        self.markers = markers
 
     def __repr__(self):
         return '<WallObj %d: (%.1f,%.1f) @ %d deg. for %.1f>' % \
                (self.id, self.x, self.y, self.theta*180/pi, self.length)
+
+class MarkerObj(WorldObject):
+    def __init__(self, id=None, x=0, y=0):
+        super().__init__(id,x,y)
+
+    def __repr__(self):
+        return '<MarkerObj %d: (%.1f,%.1f)' % \
+               (self.id, self.x, self.y)
         
 class LightCubeObj(WorldObject):
     light_cube_size = (44., 44., 44.)
@@ -81,8 +87,12 @@ class FaceObj(WorldObject):
     def __init__(self, sdk_obj, id, x, y, z, name):
         super().__init__(id, x, y, z, is_visible=sdk_obj.is_visible)
         self.sdk_obj = sdk_obj
-        self.name = name
         self.obstacle = False
+
+    # Faces can be renamed, so check the Face object
+    @property
+    def name(self):
+        return self.sdk_obj.name
 
     def __repr__(self):
         return "<FaceObj name:'%s' expr:%s (%.1f, %.1f, %.1f) vis:%s>" % \
@@ -90,10 +100,11 @@ class FaceObj(WorldObject):
 
 class CameraObj(WorldObject):
     camera_size = (44., 44., 44.)
-    def __init__(self, id=None, x=0, y=0, z=0, theta=0, phi = 0, rotm = None, tvecs = None, calibration_number= None):
+    def __init__(self, name='NULL', id=None, x=0, y=0, z=0, theta=0, phi = 0, rotm = None, tvecs = None, calibration_number= None):
         super().__init__(id,x,y,z)
         self.size = self.camera_size
         self.id = id
+        self.name = name
         self.x = x
         self.y = y
         self.z = z
@@ -104,13 +115,32 @@ class CameraObj(WorldObject):
         self.calibration_number=calibration_number
 
     def __repr__(self):
-        return '<CameraObj %d: (%.1f, %.1f, %.1f) @ %f.> Calibrated on %d' % \
+        return '<CameraObj %d: (%.1f, %.1f, %.1f) @ %f.> Calibrated on %d\n' % \
                (self.id, self.x, self.y, self.z, self.phi*180/3.14, self.calibration_number)
 
+
+class WallGhostObj(WorldObject):
+    def __init__(self, id=None, x=0, y=0, theta=0, length=100, height=150,
+                 door_width=75, door_height=105, markers=[],calibration_number = 1):
+        super().__init__(id,x,y)
+        self.z = height/2
+        self.theta = theta
+        self.length = length
+        self.height = height
+        self.door_width = door_width
+        self.door_height = door_height
+        self.markers = markers
+        self.calibration_number = calibration_number
+
+    def __repr__(self):
+        return '<WallGhostObj %d: (%.1f,%.1f) @ %d deg. for %.1f> Calibrated on %d\n' % \
+               (self.id, self.x, self.y, self.theta*180/pi, self.length, self.calibration_number)
+
 class RobotGhostObj(WorldObject):
-    def __init__(self, camera_id=None, cozmo_id=None, x=0, y=0, z=0, theta=0, is_visible=True, uncertainity=0, calibration_number = 1):
+    def __init__(self, camera_id=None, name = 'NULL', cozmo_id=None, x=0, y=0, z=0, theta=0, is_visible=True, uncertainity=0, calibration_number = 1):
         super().__init__(id,x,y,z)
         self.camera_id = camera_id
+        self.name = name
         self.cozmo_id = cozmo_id
         self.x = x
         self.y = y
@@ -122,8 +152,8 @@ class RobotGhostObj(WorldObject):
         self.size = (120., 70., 100.)
 
     def __repr__(self):
-        return '<RobotGhostObj %d-%d: (%.1f, %.1f, %.1f) @ %f.> Calibrated on %d' % \
-               (self.camera_id, self.cozmo_id, self.x, self.y, self.z, self.theta*180/3.14, self.calibration_number)
+        return '<RobotGhostObj %s-%d: (%.1f, %.1f, %.1f) @ %f.> Calibrated on %d \n' % \
+               (self.name, self.cozmo_id, self.x, self.y, self.z, self.theta*180/3.14, self.calibration_number)
 
     def update(self, x=0, y=0, z=0, theta=0, uncertainity=0):
         self.x = x
@@ -134,14 +164,23 @@ class RobotGhostObj(WorldObject):
 
 class LightCubeGhostObj(WorldObject):
     light_cube_size = (44., 44., 44.)
-    def __init__(self, id=None, x=0, y=0, z=0, theta=0):
+    def __init__(self, id=None, cozmo_id=None, x=0, y=0, z=0, theta=0, is_visible= False):
         super().__init__(id,x,y,z)
         self.theta = theta
+        self.cozmo_id = cozmo_id
         self.size = self.light_cube_size
+        self.is_visible = is_visible
 
     def __repr__(self):
-        return '<LightCubeGhostObj %d: (%.1f, %.1f, %.1f) @ %d deg.>' % \
+        return '<LightCubeGhostObj %d: (%.1f, %.1f, %.1f) @ %d deg.>\n' % \
                (self.id, self.x, self.y, self.z, self.theta*180/pi)
+
+    def update(self, x=0, y=0, z=0, theta=0, distance=0):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.theta = theta
+        self.distance = distance
 
 #================ WorldMap ================
 
@@ -151,9 +190,11 @@ class WorldMap():
     def __init__(self,robot):
         self.robot = robot
         self.objects = dict()
+        self.shared_objects = dict()
         self.temp_cams = dict()
+        self.temp_cubes = dict()
+        self.temp_walls = dict()
         self.temp_ghosts = dict(dict())
-
         
     def update_map(self):
         """Called to update the map just before the path planner runs.  Cubes,
@@ -168,36 +209,13 @@ class WorldMap():
             self.update_face(face)
 
     def generate_walls_from_markers(self):
-        landmarks = self.robot.world.particle_filter.sensor_model.landmarks
-        seen_markers = dict()
-        # Distribute markers to wall ids
-        for (id,spec) in landmarks.items():
-            wall_spec = wall_marker_dict.get(id,None)
-            if wall_spec is None: continue  # marker not part of a known wall
-            wall_id = wall_spec.id
-            markers = seen_markers.get(wall_id, list())
-            markers.append((id,spec))
-            seen_markers[wall_id] = markers
-        # Now infer the walls from the markers
-        for (id,markers) in seen_markers.items():
-            self.objects[id] = self.infer_wall(id,markers)
-
-    def infer_wall(self,id,markers):
-        # Just use one marker for now; should really do least squares fit
-        for (m_id, m_spec) in markers:
-            wall_spec = wall_marker_dict.get(m_id,None)
-            if wall_spec is None: continue  # spurious marker
-            (m_mu, m_orient, m_sigma) = m_spec
-            m_x = m_mu[0,0]
-            m_y = m_mu[1,0]
-            dist = wall_spec.length/2 - wall_spec.markers[m_id][1][0]
-            wall_orient = m_orient # simple for now
-            wall_x = m_x + dist*cos(wall_orient-pi/2)
-            wall_y = m_y + dist*sin(wall_orient-pi/2)
-            return WallObj(id=wall_spec.id, x=wall_x, y=wall_y, theta=wall_orient,
-                           length=wall_spec.length, height=wall_spec.height,
-                           door_height=wall_spec.door_height, doorways = wall_spec.doorways )
-        
+        for key, value in self.robot.world.particle_filter.sensor_model.landmarks.items():
+            if isinstance(key,str):
+                id = int(key[-(len(key)-5):])
+                wall_spec = wall_marker_dict[id]
+                self.objects[key] = WallObj(id, x=value[0][0][0], y=value[0][1][0], theta=value[1], length=wall_spec.length, height=wall_spec.height,
+                 door_width=wall_spec.door_width, door_height=wall_spec.door_height, markers=wall_spec.markers)
+            
     def update_cube(self, cube):
         if cube in self.objects:
             world_obj = self.objects[cube]

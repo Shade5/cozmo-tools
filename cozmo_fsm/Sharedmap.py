@@ -71,6 +71,11 @@ class LocateCam(StateNode):
                 return
 
             self.getframe()
+
+            if self.parent.is_server:
+                cv2.imshow("Make Sure Cozmo is visible",self.gray)
+                cv2.waitKey(1)
+
             self.corners, self.ids = self.getcorners()
             print(self.ids)
 
@@ -92,9 +97,14 @@ class LocateCam(StateNode):
         camera_z = transformed[2,0]
         euler_angles = self.rotationMatrixToEulerAngles(-rotationm)
         print("Camera" +str(self.camera_number)+ " at: ",camera_x, camera_y, camera_z, euler_angles)
-        self.robot.world.world_map.objects['Cam-'+self.owner+'-'+str(self.camera_number)] = CameraObj(random.randint(0,255), camera_x, camera_y, camera_z, euler_angles[0], euler_angles[2], rotationm, tvecs, self.ids[id][0])
-        self.parent.supreme_cozmo_id = self.ids[id][0]
-        print("World Coordinate frame is the current frame of Cozmo",self.parent.supreme_cozmo_id)
+        self.robot.world.world_map.objects['Cam-'+self.owner+'-'+str(self.camera_number)] = CameraObj(self.owner+'-'+str(self.camera_number), 
+                                                                    random.randint(0,255), camera_x, camera_y, camera_z, euler_angles[0], 
+                                                                    euler_angles[2], rotationm, tvecs, self.ids[id][0])
+
+        if self.parent.is_server:
+            self.parent.supreme_cozmo_id = self.ids[id][0]
+            print("World Coordinate frame is the current frame of Cozmo",self.parent.supreme_cozmo_id)
+            cv2.destroyAllWindows()
         self.post_completion()
 
 
@@ -174,7 +184,7 @@ class ProcessImage(StateNode):
         
     
     
-    def generate_walls_from_markers(self, corners, ids):
+    def generate_walls_from_markers(self, corners, ids, gname, cnum):
         seen_markers = dict()
         # Distribute markers to wall ids
         for i in range(len(ids)):
@@ -198,9 +208,9 @@ class ProcessImage(StateNode):
             wall_x = -location[1,0] - wall_spec.length*sin(wall_orient)/2
             
 
-            self.robot.world.world_map.objects[wall_spec.id+10] = WallObj(id=wall_spec.id, x=wall_x, y=wall_y, theta=wall_orient,
+            self.robot.world.world_map.temp_walls["Wall"+gname+"-"+str(wall_spec.id)] = WallGhostObj(id=wall_spec.id, x=wall_x, y=wall_y, theta=wall_orient-pi,
                            length=wall_spec.length, height=wall_spec.height,
-                           door_height=wall_spec.door_height, doorways = wall_spec.doorways, ghost=True )
+                           door_height=wall_spec.door_height, markers = wall_spec.markers, calibration_number=cnum)
 
     def start(self, event=None):
         if self.camera_number not in self.parent.caplist:
@@ -220,6 +230,7 @@ class ProcessImage(StateNode):
         for key in self.seen:
             self.seen[key]=False
         Cam = self.robot.world.world_map.objects['Cam-'+self.owner+'-'+str(self.camera_number)]
+        gname = 'Ghost-'+Cam.name
         if type(ids) is np.ndarray:
             vecs = aruco.estimatePoseSingleMarkers(self.corners, 50, self.camera_matrix, self.distCoeffs)
             rvecs, tvecs2 = vecs[0], vecs[1]
@@ -234,17 +245,18 @@ class ProcessImage(StateNode):
                     Y = location[0,0]
                     X = -location[1,0]
                     phi = self.rotationMatrixToEulerAngles(-rotationm1)[2] - self.rotationMatrixToEulerAngles(-rotationm2)[2]
-                    gname = 'Ghost'+str(self.camera_number)+str(Cam.id)
                     if (gname,str(ids[id][0])) in self.robot.world.world_map.temp_ghosts:
                         self.robot.world.world_map.temp_ghosts[gname,str(ids[id][0])].update(X, Y, 0, phi, self.uncertainity(self.corners))
                         self.seen[gname,str(ids[id][0])]=True
                     else:
                         print(gname+'-'+str(ids[id][0]))
-                        self.robot.world.world_map.temp_ghosts[gname,str(ids[id][0])] = RobotGhostObj(Cam.id, ids[id][0], X, Y, 0, phi, True, self.uncertainity(self.corners), Cam.calibration_number)
+                        self.robot.world.world_map.temp_ghosts[gname,str(ids[id][0])] = RobotGhostObj(Cam.id, Cam.name, ids[id][0], X, Y, 
+                                                                                                    0, phi, True, self.uncertainity(self.corners), 
+                                                                                                    Cam.calibration_number)
                         self.seen[gname,str(ids[id][0])]=True
                 except:
                     print('Camera not found')
-            self.generate_walls_from_markers( self.corners, ids)
+            self.generate_walls_from_markers( self.corners, ids, gname, Cam.calibration_number)
         for key in self.seen:
             self.robot.world.world_map.temp_ghosts[key].is_visible = self.seen[key]
 
@@ -255,6 +267,7 @@ class FindTransforms(StateNode):
         super().start(event)
         self.supreme_cozmo_id = self.parent.supreme_cozmo_id
         for key, value in self.robot.world.world_map.temp_ghosts.items():
+            # Fix later
             if value.calibration_number != self.supreme_cozmo_id and value.calibration_number == value.cozmo_id and (value.calibration_number,self.supreme_cozmo_id) not in self.parent.tranforms:
                 for k, v in self.robot.world.world_map.temp_ghosts.items():
                     if v.calibration_number == self.supreme_cozmo_id and v.cozmo_id == value.cozmo_id:
@@ -293,26 +306,49 @@ class Fusion(StateNode):
         except:
             print("No transform found")
 
+    def transform_cube(self, cube):
+        try:
+            cozmo = self.robot.world.world_map.objects['Ghost'+str(cube.cozmo_id)]
+            theta, X, Y = cozmo.theta, cozmo.x, cozmo.y
+            x = X + cos(theta)*cube.x + sin(theta)*cube.y
+            y = Y + cos(theta)*cube.y - sin(theta)*cube.x
+            cube.x=x
+            cube.y=y
+            cube.theta+=theta
+            cube.cozmo_id = self.supreme_cozmo_id
+        except:
+            print("No transform found cube")
+
     def start(self, event=None):
         super().start(event)
         self.supreme_cozmo_id = self.parent.supreme_cozmo_id
         minn = {}
         for key, value in self.robot.world.world_map.temp_ghosts.items():
-            if value.is_visible and int(key[1]) in self.parent.cozmo_map:
+            if value.is_visible and int(key[1]) in self.parent.cozmo_list:
                 cm = minn.get(key[1],np.inf)
                 if cm > value.uncertainity:
                     minn[key[1]] = value.uncertainity
                     if value.calibration_number != self.supreme_cozmo_id:
                         self.transform_ghost(value)
-                if self.parent.cozmo_map[int(key[1])] != socket.gethostname():
+
+                if self.parent.this_cozmo_id != int(key[1]):
                     self.robot.world.world_map.objects['Ghost'+key[1]]=value
                 else:
-                    self.robot.world.particle_filter.set_pose(value.x, value.y, value.theta)
-        for key, value in self.robot.world.world_map.temp_cams.items():
-            if 'Cam' in key and value.calibration_number != self.supreme_cozmo_id:
-                self.transform_cam(value)
+                    if self.parent.supreme_cozmo_id != int(key[1]):
+                        self.robot.world.particle_filter.set_pose(value.x, value.y, value.theta)
 
+        for key, value in self.robot.world.world_map.temp_cams.items():
+            if value.calibration_number != self.supreme_cozmo_id:
+                self.transform_cam(value)
             self.robot.world.world_map.objects[key] = value
+
+        for key, value in self.robot.world.world_map.temp_cubes.items():
+            if value.cozmo_id != self.supreme_cozmo_id:
+                self.transform_cube(value)
+            self.robot.world.world_map.objects[key] = value
+
+        for key, value in self.robot.world.world_map.temp_walls.items():
+            self.robot.world.world_map.objects["GhostWall"+str(value.id)] = value
 
         self.post_completion()
 
@@ -334,11 +370,18 @@ class Client(object):
         return self #lets user to call client = Client().startClient()
 
     def sendMessage(self,msg):
-        self.socket.recv(1024)
+        data = b''
+        while True:
+            data += self.socket.recv(1024)
+            if data[-3:]==b'end':
+                break
+
+        self.robot.world.world_map.shared_objects = pickle.loads(data[:-3])
+
         if type(msg) == str:
             self.socket.sendall((msg).encode()) #send as byte string
         else:
-            self.socket.sendall(pickle.dumps(msg))
+            self.socket.sendall(pickle.dumps(msg)+b'end')
 
 
 class myThread (threading.Thread):
@@ -350,12 +393,20 @@ class myThread (threading.Thread):
         self.robot = robot
     def run(self):
         for i in range(300):
-            self.c.send(b'Thank you for connecting')
-            ghosts = pickle.loads(self.c.recv(4096))
+            self.c.sendall(pickle.dumps(self.robot.world.world_map.objects)+b'end')
+            data = b''
+            while True:
+                data += self.c.recv(1024)
+                if data[-3:]==b'end':
+                    break
+
+            ghosts = pickle.loads(data[:-3])
 
             for key, value in ghosts.items():
                 if 'Cam' in key:
                     self.robot.world.world_map.temp_cams[key]=value
+                elif 'Cube' in key:
+                    self.robot.world.world_map.temp_cubes[key]=value
                 else:
                     self.robot.world.world_map.temp_ghosts[key]=value
 
@@ -390,6 +441,11 @@ class Send(StateNode):
         for key, value in self.robot.world.world_map.objects.items():
             if type(key)==str:
                 ghosts[key] = value
+            #elif type(key)==cozmo.objects.LightCube: # <class '_proxy_LightCube'> problem
+            else:
+                ghosts["GhostCube"+str(key.cube_id)] = LightCubeGhostObj(value.id, self.parent.this_cozmo_id, 
+                                                                        x=value.x, y=value.y, z=value.z, 
+                                                                        theta=value.theta, is_visible = value.is_visible)
 
         for key, value in self.robot.world.world_map.temp_ghosts.items():
             ghosts[key] = value
@@ -406,34 +462,38 @@ class Sharedmap(StateMachineProgram):
         if ipaddr not in ["None",""]:
             print("ipaddr is "+ipaddr)
             self.client = Client(self.robot).startClient(ipaddr=ipaddr,port=1800)
+            self.is_server=False
         else:
             print("Launching Server...")
             self.server = Server(self.robot, port=1800)
             self.server.start()
-        self.cozmo_map = { 1:"a", 2:"tekkotsu2" }
+            self.is_server=True
+        self.cozmo_map = { "a":1, "tekkotsu-cmu1":2 }
+        self.cozmo_list = self.cozmo_map.values()
+        self.this_cozmo_id = self.cozmo_map[socket.gethostname()]
         self.tranforms = {}
         self.caplist = {}
         self.supreme_cozmo_id = 1
 
-        self.cameraMatrix = np.matrix([[1345.060313, 0.000000, 739.328158],
-        [0.000000, 1357.301748, 396.351370],
-        [0.000000, 0.000000, 1.000000]])
+        self.cameraMatrix = np.matrix([[1148.00,       -3,    641.0],
+                         [0.000000,   1145.0,    371.0],
+                         [0.000000, 0.000000, 1.000000]])
         self.distCoeffs = np.array([0.211679, -0.179776, 0.041896, 0.040334, 0.000000])
         super().start()
 
     def setup(self):
         """
             #launch:  Recieve() =C=> process
-            launch:  LocateCam(0) =C=> process
+            launch:  LocateCam(1) =C=> process
             #setup :  ProcessImage(1,1140)  =C=> FindTransforms() =C=> Set_current_cozmo() =C=> process
             #process: Recieve() =C=> process
-            process: ProcessImage(0) =C=> FindTransforms() =C=> Fusion() =C=> process
+            process: ProcessImage(1) =C=> FindTransforms() =C=> Fusion() =C=> process
         """
         
-        # Code generated by genfsm on Thu Oct 12 14:10:43 2017:
+        # Code generated by genfsm on Tue Oct 31 12:06:49 2017:
         
-        launch = LocateCam(0) .set_name("launch") .set_parent(self)
-        process = ProcessImage(0) .set_name("process") .set_parent(self)
+        launch = LocateCam(1) .set_name("launch") .set_parent(self)
+        process = ProcessImage(1) .set_name("process") .set_parent(self)
         findtransforms1 = FindTransforms() .set_name("findtransforms1") .set_parent(self)
         fusion1 = Fusion() .set_name("fusion1") .set_parent(self)
         

@@ -231,6 +231,7 @@ class StateMachineProgram(StateNode):
             # Done with annotation
             if self.windowName:
                 cv2.imshow(self.windowName, annotated_im)
+                cv2.waitKey(1)
 
         # Use this heartbeat signal to look for new landmarks on startup
         pf = self.robot.world.particle_filter

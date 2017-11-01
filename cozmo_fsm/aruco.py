@@ -1,25 +1,41 @@
 import cv2, numpy, math
+from numpy import sqrt, arctan2
 
 class ArucoMarker(object):
-  def __init__(self,marker_id,bbox,translation,rotation):
-    self.id = marker_id
-    self.bbox = bbox
+    def __init__(self,marker_id,bbox,translation,rotation):
+      self.id = marker_id
+      self.bbox = bbox
 
-    # OpenCV Pose information
-    self.opencv_translation = translation
-    self.opencv_rotation = (180/math.pi)*rotation
+      # OpenCV Pose information
+      self.opencv_translation = translation
+      self.opencv_rotation = (180/math.pi)*rotation
+      self.euler_rotation = self.rotationMatrixToEulerAngles(cv2.Rodrigues(rotation)[0])*(180/math.pi)
 
-    # Cozmo coordinates in camera reference frame
-    self.camera_coords = (-translation[0], -translation[1], translation[2])
-    self.camera_distance = math.sqrt(translation[0]*translation[0] +
-                                     translation[2]*translation[2])
+      # Cozmo coordinates in camera reference frame
+      self.camera_coords = (-translation[0], -translation[1], translation[2])
+      self.camera_distance = math.sqrt(translation[0]*translation[0] +
+                                       translation[2]*translation[2])
 
-  def __str__(self):
-    return "<ArucoMarker id=%d trans=(%d,%d,%d) rot=(%d,%d,%d)>" % \
-              (self.id, *self.opencv_translation, *self.opencv_rotation)
+    def __str__(self):
+      return "<ArucoMarker id=%d trans=(%d,%d,%d) rot=(%d,%d,%d) erot=(%d,%d,%d)>" % \
+                (self.id, *self.opencv_translation, *self.opencv_rotation, *self.euler_rotation)
 
-  def __repr__(self):
-    return self.__str__()
+    def __repr__(self):
+      return self.__str__()
+
+    def rotationMatrixToEulerAngles(self,R) :
+        sy = sqrt(R[0,0] * R[0,0] +  R[1,0] * R[1,0])
+        singular = sy < 1e-6
+        if  not singular :
+            x = arctan2(R[2,1] , R[2,2])
+            y = arctan2(-R[2,0], sy)
+            z = arctan2(R[1,0], R[0,0])
+        else :
+            x = arctan2(-R[1,2], R[1,1])
+            y = arctan2(-R[2,0], sy)
+            z = 0
+ 
+        return np.array([x, y, z])
 
 
 class Aruco(object):
@@ -42,6 +58,7 @@ class Aruco(object):
                          [0,             0,            1]]).astype(float)
         self.distortion_array = numpy.array([[0,0,0,0,0]]).astype(float)
 
+
     def process_image(self,gray):
         self.seen_marker_ids = []
         self.seen_marker_objects = dict()
@@ -59,10 +76,15 @@ class Aruco(object):
 
         self.rvecs = estimate[0]
         self.tvecs = estimate[1]
+
+        #print("rvecs",rod*180/np.pi)
         for i in range(len(self.ids)):
             marker = ArucoMarker(self.ids[i][0], self.corners[i],self.tvecs[i][0],self.rvecs[i][0])
             self.seen_marker_ids.append(marker.id)
             self.seen_marker_objects[marker.id] = marker
+        #    cv2.aruco.drawAxis(gray, self.camera_matrix, self.distortion_array, self.rvecs[i], self.tvecs[i], 50)
+        #cv2.imshow("GRAY",gray)
+        #cv2.waitKey(1)
 
     def annotate(self, image, scale_factor):
         scaled_corners = [ numpy.multiply(corner, scale_factor) for corner in self.corners ]

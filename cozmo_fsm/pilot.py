@@ -11,6 +11,7 @@ from .transitions import CompletionTrans, FailureTrans, DataTrans
 from .cozmo_kin import wheelbase, center_of_rotation_offset
 
 from cozmo.util import distance_mm, speed_mmps
+from pdb import set_trace
 
 class NavStep():
     FORWARD = "forward"
@@ -330,7 +331,7 @@ class PilotToPose(StateNode):
                 cpath.append([node.x, node.y])
             if self.parent.verbose:
                 print('cpath =', cpath)
-
+            set_trace()
             self.post_data(cpath)
 
     def setup(self):
