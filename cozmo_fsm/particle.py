@@ -12,6 +12,22 @@ from .transform import wrap_angle
 from .aruco import ArucoMarker
 from .cozmo_kin import center_of_rotation_offset
 
+import cv2
+from cv2 import aruco
+from pdb import set_trace
+
+
+class Cam():
+    def __init__(self,x,y,z,cap):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.cap = cap
+
+    def __repr__(self):
+        return '<Cam (%.2f, %.2f, %.2f)>' % \
+               (self.x, self.y, self.z,)  
+
 class Particle():
     def __init__(self):
         self.x = 0
@@ -553,18 +569,21 @@ class SLAMParticle(Particle):
 
     sigma_r = 50
     sigma_alpha = 15 * (pi/180)
-    sensor_variance_Qt = np.array([[sigma_r**2, 0             ],
-                                [0,          sigma_alpha**2]])
+    sigma_phi = 15 * (pi/180)         # find right values
+    sensor_variance_Qt = np.array([[sigma_r**2, 0             , 0],
+                                   [0, sigma_alpha**2, 0],
+                                   [0         , 0             , sigma_phi**2]])
 
     @staticmethod
     def sensor_jacobian_H(dx, dy, dist):
         """Jacobian of sensor values (r, alpha) wrt particle state x,y
            where (dx,dy) is vector from particle to lm, and
-           r = sqrt(dx**2 + dy**2), alpha = atan2(dy,dx)"""
+           r = sqrt(dx**2 + dy**2), alpha = atan2(dy,dx), phi = phi """
         q = dist**2
         sqr_q = dist
-        return np.array([[dx/sqr_q, dy/sqr_q],
-                         [-dy/q    , dx/q     ]])
+        return np.array([[dx/sqr_q, dy/sqr_q, 0],
+                         [-dy/q   , dx/q    , 0],
+                         [0       , 0       , 1]])
 
     def add_landmark(self, lm_id, sensor_dist, sensor_bearing, sensor_orient):
         direction = self.theta + sensor_bearing
@@ -574,6 +593,8 @@ class SLAMParticle(Particle):
         lm_y = self.y + dy
 
         if isinstance(lm_id, cozmo.objects.LightCube):
+            lm_orient = sensor_orient
+        elif isinstance(lm_id, type(cv2.VideoCapture(100))):
             lm_orient = sensor_orient
         else:  # AruCo marker
             lm_orient = sensor_orient + self.theta
@@ -586,27 +607,24 @@ class SLAMParticle(Particle):
         self.landmarks[lm_id] = (lm_mu, lm_orient, lm_sigma)
 
     def update_landmark(self, id, sensor_dist, sensor_bearing, sensor_orient,
-                        dx, dy, I=np.eye(2)):
+                        dx, dy, I=np.eye(3)):
         # (dx,dy) is vector from particle to SENSOR position of lm
         (old_mu, old_orient, old_sigma) = self.landmarks[id]
         H = self.sensor_jacobian_H(dx, dy, sensor_dist)
         Ql =  H.dot(old_sigma.dot(H.T)) + self.sensor_variance_Qt
         Ql_inv = np.linalg.inv(Ql)
         K = old_sigma.dot((H.T).dot(Ql_inv))
-        z = np.array([[sensor_dist], [sensor_bearing]])
+        z = np.array([[sensor_dist], [sensor_bearing], [sensor_orient]])
         # (ex,ey) is vector from particle to MAP position of lm
         ex = old_mu[0,0] - self.x
         ey = old_mu[1,0] - self.y
-        h = np.array([[sqrt(ex**2+ey**2)], [wrap_angle(atan2(ey,ex) - self.theta)]])
-        new_mu = old_mu + K.dot(z - h)
+        h = np.array([[sqrt(ex**2+ey**2)], [wrap_angle(atan2(ey,ex) - self.theta)], [wrap_angle(old_orient - self.theta)] ])
+        new_mu = np.append(old_mu,[old_orient]).reshape([3,1]) + K.dot(z - h)
         new_sigma = (I - K.dot(H)).dot(old_sigma)
         # Should be deriving H for (x,y,phi) instead of (x,y), to update orient
         # For now, just do exponential averaging to update phi
-        computed_orient = sensor_orient + self.theta
-        ori_c = 9*cos(old_orient) + cos(computed_orient)
-        ori_s = 9*sin(old_orient) + sin(computed_orient)
-        new_orient = atan2(ori_s, ori_c)
-        self.landmarks[id] = (new_mu, new_orient, new_sigma)
+        new_orient = new_mu[2]
+        self.landmarks[id] = (new_mu[0:2], new_orient, new_sigma)
 
 class SLAMSensorModel(SensorModel):
     @staticmethod
@@ -624,7 +642,38 @@ class SLAMSensorModel(SensorModel):
         self.landmark_test = landmark_test
         self.distance_variance = distance_variance
         self.candidate_landmarks = dict()
+        self.cameras = [cv2.VideoCapture(1)]
+        for cap in self.cameras:
+            cap.set(3,4000)
+            cap.set(4,4000)
+        self.cameraMatrix = np.matrix([[1148.00,       -3,    641.0],
+                                       [0.000000,   1145.0,    371.0],
+                                       [0.000000, 0.000000, 1.000000]])
+        self.distCoeffs = np.array([0.211679, -0.179776, 0.041896, 0.040334, 0.000000])
+        self.aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_250)
+        self.parameters =  aruco.DetectorParameters_create()
+        self.cou=0
+
         super().__init__(robot,landmarks)
+
+    def perched_cameras(self):
+        cams = []
+        for cap in self.cameras:
+            for i in range(5):
+                cap.grab()
+            ret, frame = cap.read()
+            gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+            corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.parameters)
+
+            if type(ids) is np.ndarray:
+                vecs = aruco.estimatePoseSingleMarkers(corners, 50, self.cameraMatrix, self.distCoeffs)
+                rvecs, tvecs = vecs[0], vecs[1]
+                rotationm, jcob = cv2.Rodrigues(rvecs[0])
+                transformed = np.matrix(rotationm).T*(-np.matrix(tvecs).T)
+                cams.append(Cam(transformed[0][0,0],transformed[1][0,0],transformed[2][0,0], cap))
+
+        return cams
+
 
     def evaluate(self, particles, force=False, just_looking=False):
         # Returns true if particles were evaluated.
@@ -649,6 +698,10 @@ class SLAMSensorModel(SensorModel):
                  if cube.is_visible and self.landmark_test(cube)] + \
             [marker.id for marker in seen_marker_objects.values()
                  if self.landmark_test(marker)]
+        if self.cou > 5:
+            self.cou = 0
+            seen_landmarks = seen_landmarks + self.perched_cameras()
+        self.cou+=1
         # Process each seen landmark:
         for id in seen_landmarks:
             if isinstance(id, cozmo.objects.LightCube):
@@ -663,6 +716,13 @@ class SLAMSensorModel(SensorModel):
                 # sensor_orient is lm bearing relative to cube's North
                 sensor_orient = \
                     wrap_angle(sdk_bearing - id.pose.rotation.angle_z.radians)
+            elif isinstance(id, Cam):
+                sensor_dist = sqrt(id.x**2 + id.y**2)
+                sensor_bearing = atan2(id.y,
+                                       id.x)
+                sensor_orient = id.z
+                id = id.cap
+
             else:  # lm is an AruCo marker
                 marker = seen_marker_objects[id]
                 sensor_dist = marker.camera_distance
@@ -673,16 +733,19 @@ class SLAMSensorModel(SensorModel):
                 # we don't have an independent coordinate system to measure by.
                 # Also, OpenCV's rotation has the wrong sign, so we must fix it.
                 sensor_orient = - marker.opencv_rotation[1] * (pi/180)
+
             if id not in particles[0].landmarks:
-                seen_count = self.candidate_landmarks.get(id,0)
-                if seen_count < 5:
-                    # add 2 because we're going to subtract 1 at the end
-                    self.candidate_landmarks[id] = seen_count + 2
-                    continue
+                if not isinstance(id, type(cv2.VideoCapture(100))):
+                    seen_count = self.candidate_landmarks.get(id,0)
+                    if seen_count < 5:
+                        # add 2 because we're going to subtract 1 at the end
+                        self.candidate_landmarks[id] = seen_count + 2
+                        continue
                 print('  *** ADDING LANDMARK ', id)
                 for p in particles:
                     p.add_landmark(id, sensor_dist, sensor_bearing, sensor_orient)
-                del self.candidate_landmarks[id]
+                if not isinstance(id, type(cv2.VideoCapture(100))):
+                    del self.candidate_landmarks[id]
                 continue
             if just_looking:
                 continue

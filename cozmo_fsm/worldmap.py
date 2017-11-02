@@ -4,6 +4,8 @@ from cozmo.objects import CustomObject, LightCube
 
 from . import transform
 from .transform import wrap_angle
+import cv2
+from pdb import set_trace
 
 class WorldObject():
     def __init__(self, id=None, x=0, y=0, z=0, is_visible=False):
@@ -160,10 +162,16 @@ class WorldMap():
         freshest possible value.  Walls must be generated fresh as
         they have no observation events."""
         self.generate_walls_from_markers()
+        self.update_perched_cameras()
         for (id,cube) in self.robot.world.light_cubes.items():
             self.update_cube(cube)
         for face in self.robot.world._faces.values():
             self.update_face(face)
+
+    def update_perched_cameras(self):
+        for key, val in self.robot.world.particle_filter.sensor_model.landmarks.items():
+            if isinstance(key, type(cv2.VideoCapture(100))):
+                self.objects["Cam"]= CameraObj(id=1, x=val[0][0,0], y=val[0][1,0], z=val[1])
 
     def generate_walls_from_markers(self):
         landmarks = self.robot.world.particle_filter.sensor_model.landmarks
