@@ -1,5 +1,5 @@
 import cv2, numpy, math
-from numpy import sqrt, arctan2
+from numpy import sqrt, arctan2, array
 
 class ArucoMarker(object):
     def __init__(self,marker_id,bbox,translation,rotation):
@@ -35,7 +35,7 @@ class ArucoMarker(object):
             y = arctan2(-R[2,0], sy)
             z = 0
  
-        return np.array([x, y, z])
+        return array([x, y, z])
 
 
 class Aruco(object):

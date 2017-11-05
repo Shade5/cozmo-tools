@@ -14,6 +14,7 @@ from .cozmo_kin import center_of_rotation_offset
 from .worldmap import WallObj, wall_marker_dict, MarkerObj
 import cv2
 from numpy import arctan2
+from pdb import set_trace
 
 class Particle():
     def __init__(self):
@@ -653,10 +654,10 @@ class SLAMSensorModel(SensorModel):
         for key, value in markers:
             (s, (cx, cy)) = wall_spec.markers[key]
             
-            world_points.append((cx-marker_size/2, cy+marker_size/2,0))
-            world_points.append((cx+marker_size/2, cy+marker_size/2,0))
-            world_points.append((cx+marker_size/2, cy-marker_size/2,0))
-            world_points.append((cx-marker_size/2, cy-marker_size/2,0))
+            world_points.append((cx-s*marker_size/2, cy+marker_size/2,s))
+            world_points.append((cx+s*marker_size/2, cy+marker_size/2,s))
+            world_points.append((cx+s*marker_size/2, cy-marker_size/2,s))
+            world_points.append((cx-s*marker_size/2, cy-marker_size/2,s))
             
             image_points.append(value[0])
             image_points.append(value[1])
@@ -667,11 +668,12 @@ class SLAMSensorModel(SensorModel):
         rotationm, jcob = cv2.Rodrigues(rvecs)
         transformed = np.matrix(rotationm).T*(-np.matrix(tvecs))
 
-        wall_orient = self.rotationMatrixToEulerAngles(rotationm)[1]
+        an = self.rotationMatrixToEulerAngles(rotationm)
+        wall_orient = wrap_angle(s*(an[1]+an[2]))   # Unstable, fix later
 
         wall_x = -transformed[2]*cos(wall_orient) + (transformed[0]-wall_spec.length/2)*sin(wall_orient)
         wall_y = (transformed[0]-wall_spec.length/2)*cos(wall_orient) - -transformed[2]*sin(wall_orient)
-
+        #print(wall_x,wall_y, wall_orient*180/pi, an*180/pi)
         return WallObj(id=wall_spec.id, x=wall_x, y=wall_y, theta=-wall_orient,
                        length=wall_spec.length, height=wall_spec.height,
                        door_height=wall_spec.door_height, markers = wall_spec.markers )

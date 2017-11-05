@@ -9,42 +9,74 @@ from .nodes import *
 from .transitions import *
 from .transform import wrap_angle
 from .pilot import PilotToPose, PilotCheckStart
+from .worldmap import WallObj
 
 from math import sin, cos, atan2, pi, sqrt
 
 class GoToWall(StateNode):
 
-    def __init__(self, wall=None, door_id = 0):
+    def __init__(self, wall=-1, door=-1):
+        super().__init__()
         self.object = wall
         self.wall_name = 'Wall-'+str(wall)
-        self.door_id = door_id
-        super().__init__()
+        self.door_id = door
+
+    def start(self,event=None):
         if self.wall_name in self.robot.world.world_map.objects:
             self.wobj = self.robot.world.world_map.objects[self.wall_name]
             print("Choosing Robot view")
         else:
-            self.wobj = self.robot.world.world_map.objects["GhostWall"+str(wall)]
+            self.wobj = self.robot.world.world_map.objects["GhostWall"+str(self.object)]
             print("Choosing Ghost")
 
-        self.door_coordinates = self.wobj.markers[door_id][1]
-
-        print(self.door_coordinates)
+        if self.door_id==-1:
+            self.door_coordinates = -1
+            print("Going to closest door")
+        else:
+            self.door_coordinates = self.wobj.markers[self.door_id][1]
+            print(self.door_coordinates)
+        super().start(event)
 
     def pick_side(self, dist):
         wall = self.object
         door_coordinates = self.door_coordinates
+
         x = self.wobj.x 
         y = self.wobj.y
         ang = self.wobj.theta
         rx = self.robot.world.particle_filter.pose[0]
         ry = self.robot.world.particle_filter.pose[1]
 
-        side1 = (x + cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates[0]), y + sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates[0]), ang + pi)
-        side2 = (x - cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates[0]), y - sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates[0]), ang)
-        sides = [side1, side2]
-        sorted_sides = sorted(sides, key=lambda pt: (pt[0]-rx)**2 + (pt[1]-ry)**2)
+        if door_coordinates == -1:
+        	door_id1 = wall+1	# with current config of walls
+        	door_id2 = wall+4
+        	door_coordinates1 = self.wobj.markers[door_id1][1]
+        	door_coordinates2 = self.wobj.markers[door_id2][1]
 
-        return sorted_sides[0]
+	        side1 = (x + cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates1[0]), y + sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates1[0]), wrap_angle(ang+pi), door_id1+9)
+	        side2 = (x - cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates1[0]), y - sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates1[0]), wrap_angle(ang), door_id1 )
+	        side3 = (x + cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates2[0]), y + sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates2[0]), wrap_angle(ang+pi), door_id2+3)
+	        side4 = (x - cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates2[0]), y - sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates2[0]), wrap_angle(ang), door_id2)
+	        sides = [side1, side2, side3, side4]
+
+	        sorted_sides = sorted(sides, key=lambda pt: (pt[0]-rx)**2 + (pt[1]-ry)**2)
+	        self.door_id = sorted_sides[0][3]
+	        self.door_coordinates = self.wobj.markers[self.door_id][1]
+
+	        print("Going to door", self.door_id )
+
+	        shortest = sorted_sides[0][0:3]
+
+        else:
+	        side1 = (x + cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates[0]), y + sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates[0]), wrap_angle(ang+pi))
+	        side2 = (x - cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates[0]), y - sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates[0]), wrap_angle(ang))
+	        sides = [side1, side2]
+
+        	sorted_sides = sorted(sides, key=lambda pt: (pt[0]-rx)**2 + (pt[1]-ry)**2)
+
+        	shortest = sorted_sides[0]
+
+        return shortest
 
     class TurnToSide(Turn):
         def __init__(self):
@@ -53,7 +85,8 @@ class GoToWall(StateNode):
         def start(self, event=None):
             wall = self.parent.object
             wobj = self.parent.wobj
-            dtheta = (wobj.theta - self.robot.world.particle_filter.pose_estimate()[2])
+            (x, y, ang) = self.parent.pick_side(200)
+            dtheta = wrap_angle(ang - self.robot.world.particle_filter.pose_estimate()[2])
             if abs(dtheta) > 0.1:
                 self.angle = Angle(dtheta)
                 super().start(event)
@@ -150,7 +183,11 @@ class GoToWall(StateNode):
             ry = self.robot.pose.position.y
             rt = self.robot.pose.rotation.angle_z.radians
 
-            marker = self.robot.world.aruco.seen_marker_objects[door_id]
+            while(True):
+            	marker = self.robot.world.aruco.seen_marker_objects.get(door_id,-1)
+            	if not isinstance(marker,int):
+            		break
+            	print("Marker Vanished!!")
             sensor_dist = marker.camera_distance
             sensor_bearing = atan2(marker.camera_coords[0],
                                    marker.camera_coords[2])
@@ -191,7 +228,7 @@ class GoToWall(StateNode):
             droplift: SetLiftHeight(0) =T(0.5)=> check_start    # time for vision to set up world map
     
             check_start: PilotCheckStart()
-            check_start =S=> SetHeadAngle(0) =T(2)=> turn_to_side
+            check_start =S=> SetHeadAngle(0) =C=> turn_to_side
             check_start =F=> Forward(-80) =C=> check_start
     
             turn_to_side: self.TurnToSide()
@@ -200,31 +237,26 @@ class GoToWall(StateNode):
     
             go_side: self.GoToSide() =C=> self.TurnToSide() =C=> lookup
     
-            lookup:  SetHeadAngle(25) =T(2)=> find
+            lookup:  SetHeadAngle(25) =C=> find
     
-            find: self.TurnToWall() =C=>
-                self.ReportPosition() =T(0.75)=> approach
+            find: self.TurnToWall() =C=>approach
             find =F=> Forward(-80) =C=> StateNode() =T(1)=> find2
     
-            find2: self.TurnToWall() =C=>
-                self.ReportPosition() =T(0.75)=> approach
+            find2: self.TurnToWall() =C=>approach
             find2 =F=> Forward(-80) =C=> Say("No Door trying again") =C=> turn_to_side
     
             approach: self.ForwardToWall(150) =C=> self.FindWall() =C=>
-                self.ReportPosition() =T(0.75)=>
                 self.TurnToWall() =C=> self.FindWall() =C=>
                 self.ForwardToWall(100) =C=> self.FindWall() =C=>
-                self.ReportPosition() =T(0.75)=>
                 self.TurnToWall() =C=> self.FindWall() =C=>
                 self.ForwardToWall(60) =C=> self.FindWall() =C=>
-                self.ReportPosition() =T(0.75)=>
                 self.TurnToWall()=C=> end
     
     
-            end: SetHeadAngle(0) =C=> Forward(100) =C=> Say("Done") =C=> ParentCompletes()
+            end: SetHeadAngle(0) =C=> Forward(150) =C=> ParentCompletes()
         """
         
-        # Code generated by genfsm on Tue Oct 31 12:06:49 2017:
+        # Code generated by genfsm on Sun Nov  5 11:34:53 2017:
         
         droplift = SetLiftHeight(0) .set_name("droplift") .set_parent(self)
         check_start = PilotCheckStart() .set_name("check_start") .set_parent(self)
@@ -236,30 +268,24 @@ class GoToWall(StateNode):
         turntoside1 = self.TurnToSide() .set_name("turntoside1") .set_parent(self)
         lookup = SetHeadAngle(25) .set_name("lookup") .set_parent(self)
         find = self.TurnToWall() .set_name("find") .set_parent(self)
-        reportposition2 = self.ReportPosition() .set_name("reportposition2") .set_parent(self)
         forward2 = Forward(-80) .set_name("forward2") .set_parent(self)
         statenode1 = StateNode() .set_name("statenode1") .set_parent(self)
         find2 = self.TurnToWall() .set_name("find2") .set_parent(self)
-        reportposition3 = self.ReportPosition() .set_name("reportposition3") .set_parent(self)
         forward3 = Forward(-80) .set_name("forward3") .set_parent(self)
         say1 = Say("No Door trying again") .set_name("say1") .set_parent(self)
         approach = self.ForwardToWall(150) .set_name("approach") .set_parent(self)
         findwall1 = self.FindWall() .set_name("findwall1") .set_parent(self)
-        reportposition4 = self.ReportPosition() .set_name("reportposition4") .set_parent(self)
         turntowall1 = self.TurnToWall() .set_name("turntowall1") .set_parent(self)
         findwall2 = self.FindWall() .set_name("findwall2") .set_parent(self)
         forwardtowall1 = self.ForwardToWall(100) .set_name("forwardtowall1") .set_parent(self)
         findwall3 = self.FindWall() .set_name("findwall3") .set_parent(self)
-        reportposition5 = self.ReportPosition() .set_name("reportposition5") .set_parent(self)
         turntowall2 = self.TurnToWall() .set_name("turntowall2") .set_parent(self)
         findwall4 = self.FindWall() .set_name("findwall4") .set_parent(self)
         forwardtowall2 = self.ForwardToWall(60) .set_name("forwardtowall2") .set_parent(self)
         findwall5 = self.FindWall() .set_name("findwall5") .set_parent(self)
-        reportposition6 = self.ReportPosition() .set_name("reportposition6") .set_parent(self)
         turntowall3 = self.TurnToWall() .set_name("turntowall3") .set_parent(self)
         end = SetHeadAngle(0) .set_name("end") .set_parent(self)
-        forward4 = Forward(100) .set_name("forward4") .set_parent(self)
-        say2 = Say("Done") .set_name("say2") .set_parent(self)
+        forward4 = Forward(150) .set_name("forward4") .set_parent(self)
         parentcompletes1 = ParentCompletes() .set_name("parentcompletes1") .set_parent(self)
         
         timertrans1 = TimerTrans(0.5) .set_name("timertrans1")
@@ -268,17 +294,17 @@ class GoToWall(StateNode):
         successtrans1 = SuccessTrans() .set_name("successtrans1")
         successtrans1 .add_sources(check_start) .add_destinations(setheadangle1)
         
-        timertrans2 = TimerTrans(2) .set_name("timertrans2")
-        timertrans2 .add_sources(setheadangle1) .add_destinations(turn_to_side)
+        completiontrans1 = CompletionTrans() .set_name("completiontrans1")
+        completiontrans1 .add_sources(setheadangle1) .add_destinations(turn_to_side)
         
         failuretrans1 = FailureTrans() .set_name("failuretrans1")
         failuretrans1 .add_sources(check_start) .add_destinations(forward1)
         
-        completiontrans1 = CompletionTrans() .set_name("completiontrans1")
-        completiontrans1 .add_sources(forward1) .add_destinations(check_start)
-        
         completiontrans2 = CompletionTrans() .set_name("completiontrans2")
-        completiontrans2 .add_sources(turn_to_side) .add_destinations(turn_to_side)
+        completiontrans2 .add_sources(forward1) .add_destinations(check_start)
+        
+        completiontrans3 = CompletionTrans() .set_name("completiontrans3")
+        completiontrans3 .add_sources(turn_to_side) .add_destinations(turn_to_side)
         
         successtrans2 = SuccessTrans() .set_name("successtrans2")
         successtrans2 .add_sources(turn_to_side) .add_destinations(reportposition1)
@@ -286,94 +312,155 @@ class GoToWall(StateNode):
         nulltrans1 = NullTrans() .set_name("nulltrans1")
         nulltrans1 .add_sources(reportposition1) .add_destinations(go_side)
         
-        completiontrans3 = CompletionTrans() .set_name("completiontrans3")
-        completiontrans3 .add_sources(go_side) .add_destinations(turntoside1)
-        
         completiontrans4 = CompletionTrans() .set_name("completiontrans4")
-        completiontrans4 .add_sources(turntoside1) .add_destinations(lookup)
-        
-        timertrans3 = TimerTrans(2) .set_name("timertrans3")
-        timertrans3 .add_sources(lookup) .add_destinations(find)
+        completiontrans4 .add_sources(go_side) .add_destinations(turntoside1)
         
         completiontrans5 = CompletionTrans() .set_name("completiontrans5")
-        completiontrans5 .add_sources(find) .add_destinations(reportposition2)
+        completiontrans5 .add_sources(turntoside1) .add_destinations(lookup)
         
-        timertrans4 = TimerTrans(0.75) .set_name("timertrans4")
-        timertrans4 .add_sources(reportposition2) .add_destinations(approach)
+        completiontrans6 = CompletionTrans() .set_name("completiontrans6")
+        completiontrans6 .add_sources(lookup) .add_destinations(find)
+        
+        completiontrans7 = CompletionTrans() .set_name("completiontrans7")
+        completiontrans7 .add_sources(find) .add_destinations(approach)
         
         failuretrans2 = FailureTrans() .set_name("failuretrans2")
         failuretrans2 .add_sources(find) .add_destinations(forward2)
         
-        completiontrans6 = CompletionTrans() .set_name("completiontrans6")
-        completiontrans6 .add_sources(forward2) .add_destinations(statenode1)
+        completiontrans8 = CompletionTrans() .set_name("completiontrans8")
+        completiontrans8 .add_sources(forward2) .add_destinations(statenode1)
         
-        timertrans5 = TimerTrans(1) .set_name("timertrans5")
-        timertrans5 .add_sources(statenode1) .add_destinations(find2)
+        timertrans2 = TimerTrans(1) .set_name("timertrans2")
+        timertrans2 .add_sources(statenode1) .add_destinations(find2)
         
-        completiontrans7 = CompletionTrans() .set_name("completiontrans7")
-        completiontrans7 .add_sources(find2) .add_destinations(reportposition3)
-        
-        timertrans6 = TimerTrans(0.75) .set_name("timertrans6")
-        timertrans6 .add_sources(reportposition3) .add_destinations(approach)
+        completiontrans9 = CompletionTrans() .set_name("completiontrans9")
+        completiontrans9 .add_sources(find2) .add_destinations(approach)
         
         failuretrans3 = FailureTrans() .set_name("failuretrans3")
         failuretrans3 .add_sources(find2) .add_destinations(forward3)
         
-        completiontrans8 = CompletionTrans() .set_name("completiontrans8")
-        completiontrans8 .add_sources(forward3) .add_destinations(say1)
-        
-        completiontrans9 = CompletionTrans() .set_name("completiontrans9")
-        completiontrans9 .add_sources(say1) .add_destinations(turn_to_side)
-        
         completiontrans10 = CompletionTrans() .set_name("completiontrans10")
-        completiontrans10 .add_sources(approach) .add_destinations(findwall1)
+        completiontrans10 .add_sources(forward3) .add_destinations(say1)
         
         completiontrans11 = CompletionTrans() .set_name("completiontrans11")
-        completiontrans11 .add_sources(findwall1) .add_destinations(reportposition4)
-        
-        timertrans7 = TimerTrans(0.75) .set_name("timertrans7")
-        timertrans7 .add_sources(reportposition4) .add_destinations(turntowall1)
+        completiontrans11 .add_sources(say1) .add_destinations(turn_to_side)
         
         completiontrans12 = CompletionTrans() .set_name("completiontrans12")
-        completiontrans12 .add_sources(turntowall1) .add_destinations(findwall2)
+        completiontrans12 .add_sources(approach) .add_destinations(findwall1)
         
         completiontrans13 = CompletionTrans() .set_name("completiontrans13")
-        completiontrans13 .add_sources(findwall2) .add_destinations(forwardtowall1)
+        completiontrans13 .add_sources(findwall1) .add_destinations(turntowall1)
         
         completiontrans14 = CompletionTrans() .set_name("completiontrans14")
-        completiontrans14 .add_sources(forwardtowall1) .add_destinations(findwall3)
+        completiontrans14 .add_sources(turntowall1) .add_destinations(findwall2)
         
         completiontrans15 = CompletionTrans() .set_name("completiontrans15")
-        completiontrans15 .add_sources(findwall3) .add_destinations(reportposition5)
-        
-        timertrans8 = TimerTrans(0.75) .set_name("timertrans8")
-        timertrans8 .add_sources(reportposition5) .add_destinations(turntowall2)
+        completiontrans15 .add_sources(findwall2) .add_destinations(forwardtowall1)
         
         completiontrans16 = CompletionTrans() .set_name("completiontrans16")
-        completiontrans16 .add_sources(turntowall2) .add_destinations(findwall4)
+        completiontrans16 .add_sources(forwardtowall1) .add_destinations(findwall3)
         
         completiontrans17 = CompletionTrans() .set_name("completiontrans17")
-        completiontrans17 .add_sources(findwall4) .add_destinations(forwardtowall2)
+        completiontrans17 .add_sources(findwall3) .add_destinations(turntowall2)
         
         completiontrans18 = CompletionTrans() .set_name("completiontrans18")
-        completiontrans18 .add_sources(forwardtowall2) .add_destinations(findwall5)
+        completiontrans18 .add_sources(turntowall2) .add_destinations(findwall4)
         
         completiontrans19 = CompletionTrans() .set_name("completiontrans19")
-        completiontrans19 .add_sources(findwall5) .add_destinations(reportposition6)
-        
-        timertrans9 = TimerTrans(0.75) .set_name("timertrans9")
-        timertrans9 .add_sources(reportposition6) .add_destinations(turntowall3)
+        completiontrans19 .add_sources(findwall4) .add_destinations(forwardtowall2)
         
         completiontrans20 = CompletionTrans() .set_name("completiontrans20")
-        completiontrans20 .add_sources(turntowall3) .add_destinations(end)
+        completiontrans20 .add_sources(forwardtowall2) .add_destinations(findwall5)
         
         completiontrans21 = CompletionTrans() .set_name("completiontrans21")
-        completiontrans21 .add_sources(end) .add_destinations(forward4)
+        completiontrans21 .add_sources(findwall5) .add_destinations(turntowall3)
         
         completiontrans22 = CompletionTrans() .set_name("completiontrans22")
-        completiontrans22 .add_sources(forward4) .add_destinations(say2)
+        completiontrans22 .add_sources(turntowall3) .add_destinations(end)
         
         completiontrans23 = CompletionTrans() .set_name("completiontrans23")
-        completiontrans23 .add_sources(say2) .add_destinations(parentcompletes1)
+        completiontrans23 .add_sources(end) .add_destinations(forward4)
+        
+        completiontrans24 = CompletionTrans() .set_name("completiontrans24")
+        completiontrans24 .add_sources(forward4) .add_destinations(parentcompletes1)
+        
+        return self
+
+class Explore(StateNode):
+
+    def __init__(self):
+        self.current_wall = None
+        self.to_do_wall = []
+        self.done_wall = []
+        super().__init__()
+
+    class Think(StateNode):
+        def start(self,event=None):
+            super().start(event)
+            for key, val in self.robot.world.world_map.objects.items():
+            	if isinstance(val,WallObj) and val.id not in self.parent.done_wall:
+            		self.parent.to_do_wall.append(val)
+
+            if len(self.parent.to_do_wall) > 0:
+            	wall = self.parent.to_do_wall.pop()
+            	self.parent.current_wall = wall.id
+            	self.parent.done_wall.append(wall.id)
+            	print(self.parent.to_do_wall,self.parent.current_wall,self.parent.done_wall)
+            	self.post_failure()
+            else:
+            	self.post_success()
+
+    class Go(GoToWall):
+        def __init__(self):
+            super().__init__()
+            
+        def start(self,event=None):
+            self.object = self.parent.current_wall
+            self.wall_name = 'Wall-'+str(self.object)
+            self.door_id = -1
+            super().start(event)
+
+
+
+
+    def setup(self):
+        """
+            look: LookAroundInPlace(stop_on_exit=False) =T(5)=> StopBehavior() =C=> think
+    
+            think: self.Think()
+            think =F=> go
+            think =S=> end
+    
+            go: self.Go() =C=> look
+    
+            end: Say("Done") =C=> ParentCompletes()
+        """
+        
+        # Code generated by genfsm on Sun Nov  5 11:34:53 2017:
+        
+        look = LookAroundInPlace(stop_on_exit=False) .set_name("look") .set_parent(self)
+        stopbehavior1 = StopBehavior() .set_name("stopbehavior1") .set_parent(self)
+        think = self.Think() .set_name("think") .set_parent(self)
+        go = self.Go() .set_name("go") .set_parent(self)
+        end = Say("Done") .set_name("end") .set_parent(self)
+        parentcompletes2 = ParentCompletes() .set_name("parentcompletes2") .set_parent(self)
+        
+        timertrans3 = TimerTrans(5) .set_name("timertrans3")
+        timertrans3 .add_sources(look) .add_destinations(stopbehavior1)
+        
+        completiontrans25 = CompletionTrans() .set_name("completiontrans25")
+        completiontrans25 .add_sources(stopbehavior1) .add_destinations(think)
+        
+        failuretrans4 = FailureTrans() .set_name("failuretrans4")
+        failuretrans4 .add_sources(think) .add_destinations(go)
+        
+        successtrans3 = SuccessTrans() .set_name("successtrans3")
+        successtrans3 .add_sources(think) .add_destinations(end)
+        
+        completiontrans26 = CompletionTrans() .set_name("completiontrans26")
+        completiontrans26 .add_sources(go) .add_destinations(look)
+        
+        completiontrans27 = CompletionTrans() .set_name("completiontrans27")
+        completiontrans27 .add_sources(end) .add_destinations(parentcompletes2)
         
         return self
