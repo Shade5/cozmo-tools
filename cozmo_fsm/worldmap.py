@@ -171,7 +171,7 @@ class WorldMap():
     def update_perched_cameras(self):
         for key, val in self.robot.world.particle_filter.sensor_model.landmarks.items():
             if isinstance(key, type(cv2.VideoCapture(100))):
-                self.objects["Cam"]= CameraObj(id=1, x=val[0][0,0], y=val[0][1,0], z=val[1])
+                self.objects[str(key)]= CameraObj(id=1, x=val[0][0,0], y=val[0][1,0], z=val[1])
 
     def generate_walls_from_markers(self):
         landmarks = self.robot.world.particle_filter.sensor_model.landmarks
