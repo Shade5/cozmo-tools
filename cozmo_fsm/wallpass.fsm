@@ -85,7 +85,7 @@ class GoToWall(StateNode):
         def start(self, event=None):
             wall = self.parent.object
             wobj = self.parent.wobj
-            (x, y, ang) = self.parent.pick_side(200)
+            (x, y, ang) = self.parent.pick_side(150)
             dtheta = wrap_angle(ang - self.robot.world.particle_filter.pose_estimate()[2])
             if abs(dtheta) > 0.1:
                 self.angle = Angle(dtheta)
@@ -103,7 +103,7 @@ class GoToWall(StateNode):
         def start(self, event=None):
             wall = self.parent.object
             print('Selected wall',self.parent.wobj)
-            (x, y, theta) = self.parent.pick_side(200)
+            (x, y, theta) = self.parent.pick_side(150)
 
             self.target_pose = Pose(x, y, self.robot.pose.position.z,
                                     angle_z=Angle(radians = wrap_angle(theta)))
@@ -183,24 +183,25 @@ class GoToWall(StateNode):
             ry = self.robot.pose.position.y
             rt = self.robot.pose.rotation.angle_z.radians
 
-            while(True):
-            	marker = self.robot.world.aruco.seen_marker_objects.get(door_id,-1)
-            	if not isinstance(marker,int):
-            		break
-            	print("Marker Vanished!!")
-            sensor_dist = marker.camera_distance
-            sensor_bearing = atan2(marker.camera_coords[0],
-                                   marker.camera_coords[2])
-            sensor_orient = - marker.opencv_rotation[1] * (pi/180)
+            if door_id in self.robot.world.aruco.seen_marker_objects:
+                marker = self.robot.world.aruco.seen_marker_objects[door_id]
+                sensor_dist = marker.camera_distance
+                sensor_bearing = atan2(marker.camera_coords[0],
+                                       marker.camera_coords[2])
+                sensor_orient = - marker.opencv_rotation[1] * (pi/180)
 
-            direction = rt + sensor_bearing
-            dx = sensor_dist * cos(direction)
-            dy = sensor_dist * sin(direction)
-            cx = rx + dx
-            cy = ry + dy
-            dist = math.sqrt(dx*dx + dy*dy)
-            self.distance = Distance(sqrt(dx*dx + dy*dy) - self.offset)
-            super().start(event)
+                direction = rt + sensor_bearing
+                dx = sensor_dist * cos(direction)
+                dy = sensor_dist * sin(direction)
+                cx = rx + dx
+                cy = ry + dy
+                dist = math.sqrt(dx*dx + dy*dy)
+                self.distance = Distance(sqrt(dx*dx + dy*dy) - self.offset)
+                super().start(event)
+            else:
+                self.distance = Distance(0)
+                super().start(event)
+                self.post_failure()
 
 
     class FindWall(SetHeadAngle):
@@ -212,8 +213,8 @@ class GoToWall(StateNode):
             door_id = self.parent.door_id
             if door_id not in self.robot.world.aruco.seen_marker_ids:
                 print('Looking higher for wall')
-                if self.robot.head_angle.degrees < 30:
-                    self.angle = Angle(self.robot.head_angle.radians + 0.4)
+                if self.robot.head_angle.degrees < 40:
+                    self.angle = Angle(self.robot.head_angle.radians + 0.15)
                     super().start(event)
                 else:
                     self.angle = self.robot.head_angle
@@ -236,7 +237,7 @@ class GoToWall(StateNode):
 
         go_side: self.GoToSide() =C=> self.TurnToSide() =C=> lookup
 
-        lookup:  SetHeadAngle(25) =C=> find
+        lookup:  SetHeadAngle(35) =C=> find
 
         find: self.TurnToWall() =C=>approach
         find =F=> Forward(-80) =C=> StateNode() =T(1)=> find2
@@ -244,13 +245,11 @@ class GoToWall(StateNode):
         find2: self.TurnToWall() =C=>approach
         find2 =F=> Forward(-80) =C=> Say("No Door trying again") =C=> turn_to_side
 
-        approach: self.ForwardToWall(150) =C=> self.FindWall() =C=>
+        approach: self.ForwardToWall(100) =C=> self.FindWall() =C=>
             self.TurnToWall() =C=> self.FindWall() =C=>
-            self.ForwardToWall(100) =C=> self.FindWall() =C=>
-            self.TurnToWall() =C=> self.FindWall() =C=>
-            self.ForwardToWall(60) =C=> self.FindWall() =C=>
+            self.ForwardToWall(70) =C=> self.FindWall() =C=>
             self.TurnToWall()=C=> end
-
+        approach =F=> end
 
         end: SetHeadAngle(0) =C=> Forward(150) =C=> ParentCompletes()
     }
