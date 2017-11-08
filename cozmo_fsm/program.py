@@ -19,6 +19,8 @@ from .worldmap_viewer import WorldMapViewer
 from .speech import SpeechListener, Thesaurus
 from . import opengl
 from . import custom_objs
+from .perched_cams import *
+from .spider import *
 
 class StateMachineProgram(StateNode):
     def __init__(self,
@@ -34,6 +36,7 @@ class StateMachineProgram(StateNode):
 
                  aruco = True,
                  arucolibname = cv2.aruco.DICT_4X4_250,
+                 perched_cams =True,
 
                  world_map = None,
                  worldmap_viewer = False,
@@ -74,9 +77,17 @@ class StateMachineProgram(StateNode):
         self.put_down_handler = self.robot_put_down
 
         self.aruco = aruco
+        self.perched_cams = perched_cams
+
         if self.aruco:
             self.robot.world.aruco = Aruco(self.robot,arucolibname)
 
+        if self.perched_cams:
+            self.robot.world.pcam = Perched_cams()
+
+        self.robot.world.server = Server(self.robot)
+        self.robot.world.client = Client(self.robot)
+        
         self.world_map = world_map
         self.worldmap_viewer = worldmap_viewer
 

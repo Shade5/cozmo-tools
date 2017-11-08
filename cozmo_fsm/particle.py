@@ -16,17 +16,7 @@ import cv2
 from numpy import arctan2
 from cv2 import aruco
 from pdb import set_trace
-
-class Cam():
-    def __init__(self,x,y,z,cap):
-        self.x = x
-        self.y = y
-        self.z = z
-        self.cap = cap
-
-    def __repr__(self):
-        return '<Cam (%.2f, %.2f, %.2f)>' % \
-               (self.x, self.y, self.z,)
+from .perched_cams import Cam
 
 class Particle():
     def __init__(self):
@@ -677,41 +667,10 @@ class SLAMSensorModel(SensorModel):
         self.landmark_test = landmark_test
         self.distance_variance = distance_variance
         self.candidate_landmarks = dict()
-        self.use_perched_cameras=True
-        self.cameras = [cv2.VideoCapture(1)]#,cv2.VideoCapture(2)]
-        for cap in self.cameras:
-            cap.set(3,4000)
-            cap.set(4,4000)
-        self.cameraMatrix = np.matrix([[1148.00,       -3,    641.0],
-                                       [0.000000,   1145.0,    371.0],
-                                       [0.000000, 0.000000, 1.000000]])
-        self.distCoeffs = np.array([0.211679, -0.179776, 0.041896, 0.040334, 0.000000])
-        self.aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_250)
-        self.parameters =  aruco.DetectorParameters_create()
-        self.cou=0
-        self.comzo_aruco = 90
+        self.use_perched_cameras = False
         self.cap_type = type(cv2.VideoCapture(100))
-
+        self.robot_aruco_id = 90
         super().__init__(robot,landmarks)
-
-    def perched_cameras(self):
-        cams = []
-        for cap in self.cameras:
-            for i in range(5):
-                cap.grab()
-            ret, frame = cap.read()
-            gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
-            corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.parameters)
-
-            if type(ids) is np.ndarray and self.comzo_aruco in ids:
-                id = np.where(ids==self.comzo_aruco)[0][0]
-                vecs = aruco.estimatePoseSingleMarkers(corners[id], 50, self.cameraMatrix, self.distCoeffs)
-                rvecs, tvecs = vecs[0], vecs[1]
-                rotationm, jcob = cv2.Rodrigues(rvecs[0])
-                transformed = np.matrix(rotationm).T*(-np.matrix(tvecs).T)
-                cams.append(Cam(transformed[0][0,0],transformed[1][0,0],transformed[2][0,0], cap))
-
-        return cams
 
     def rotationMatrixToEulerAngles(self, R) :
         sy = sqrt(R[0,0] * R[0,0] +  R[1,0] * R[1,0])
@@ -805,10 +764,8 @@ class SLAMSensorModel(SensorModel):
                  if cube.is_visible and self.landmark_test(cube)] + \
             [marker.id for marker in seen_marker_objects.values()
                  if self.landmark_test(marker)] + self.generate_walls_from_markers(seen_marker_objects)
-        if self.use_perched_cameras and ( (not just_looking) or self.cou > 5):    # Data from camera, once in 5 cycles
-            self.cou = 0
-            seen_landmarks = seen_landmarks + self.perched_cameras()
-        self.cou+=1
+        if self.use_perched_cameras:
+            seen_landmarks = seen_landmarks + list(self.robot.world.pcam.cams.get(self.robot_aruco_id,[]).values())
         # Process each seen landmark:
         for id in seen_landmarks:
             if isinstance(id, cozmo.objects.LightCube):
