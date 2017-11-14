@@ -155,6 +155,9 @@ class ParticleViewer():
             if isinstance(id, cozmo.objects.LightCube):
                 seen = id.is_visible
                 label = next(k for k,v in self.robot.world.light_cubes.items() if v==id)
+            elif isinstance(id, str) and 'Video' in id:
+                seen = self.robot.aruco_id in self.robot.world.pcam.pool and id in self.robot.world.pcam.pool[self.robot.aruco_id]
+                label = id
             else:
                 seen = id in self.robot.world.aruco.seen_marker_ids
                 label = id
@@ -188,6 +191,7 @@ class ParticleViewer():
         glPopMatrix()
 
     def draw_landmark_from_particle(self, id, specs, label, color):
+        
         (lm_mu, lm_orient, lm_sigma) = specs
         coords = (lm_mu[0,0], lm_mu[1,0])
         glPushMatrix()
@@ -196,11 +200,19 @@ class ParticleViewer():
             size = (44,44)
         else:
             size = (20,50)
-        self.draw_rectangle(coords, size=size,
+        if isinstance(id,str) and 'Video' in id:
+            self.draw_triangle(coords, height=75, angle=lm_orient[1]*(180/pi),
+                               color=color, fill=True)
+            glColor4f(0., 0., 0., 1.)
+            glTranslatef(*coords,0)
+            glRotatef(lm_orient[1]*(180/pi)-90, 0., 0., 1.)
+        else:
+            self.draw_rectangle(coords, size=size,
                             angle=lm_orient*(180/pi), color=color)
-        glColor4f(0., 0., 0., 1.)
-        glTranslatef(*coords,0)
-        glRotatef(lm_orient*(180/pi)-90, 0., 0., 1.)
+
+            glColor4f(0., 0., 0., 1.)
+            glTranslatef(*coords,0)
+            glRotatef(lm_orient*(180/pi)-90, 0., 0., 1.)
         label_str = ascii(label)
         glTranslatef(3.-7*len(label_str), -5., 0.)
         glScalef(0.1,0.1,0.1)

@@ -83,10 +83,12 @@ class StateMachineProgram(StateNode):
             self.robot.world.aruco = Aruco(self.robot,arucolibname)
 
         if self.perched_cams:
-            self.robot.world.pcam = Perched_cams()
+            self.robot.world.pcam = Perched_cams(self.robot)
 
+        self.robot.aruco_id = 90
         self.robot.world.server = Server(self.robot)
         self.robot.world.client = Client(self.robot)
+        self.robot.world.is_server = True # Writes directly into pcam.pool
         
         self.world_map = world_map
         self.worldmap_viewer = worldmap_viewer

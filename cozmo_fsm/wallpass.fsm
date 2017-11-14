@@ -32,10 +32,15 @@ class GoToWall(StateNode):
         if self.door_id==-1:
             self.door_coordinates = -1
             print("Going to closest door")
+            super().start(event)
         else:
-            self.door_coordinates = self.wobj.markers[self.door_id][1]
-            print(self.door_coordinates)
-        super().start(event)
+            if self.door_id in self.wobj.door_ids:
+                self.door_coordinates = self.wobj.markers[self.door_id][1]
+                print(self.door_coordinates)
+                super().start(event)
+            else:
+                print(self.door_id,"is not a door")
+                self.post_failure()
 
     def pick_side(self, dist):
         wall = self.object
@@ -46,35 +51,32 @@ class GoToWall(StateNode):
         ang = self.wobj.theta
         rx = self.robot.world.particle_filter.pose[0]
         ry = self.robot.world.particle_filter.pose[1]
+        l = self.wobj.length/2
 
         if door_coordinates == -1:
-        	door_id1 = wall+1	# with current config of walls
-        	door_id2 = wall+4
-        	door_coordinates1 = self.wobj.markers[door_id1][1]
-        	door_coordinates2 = self.wobj.markers[door_id2][1]
+            door_ids = self.wobj.door_ids
+            sides = []
+            for id in door_ids:
+               door_coordinates = self.wobj.markers[id][1]
+               s = self.wobj.markers[id][0]
+               sides.append((x - s*cos(ang)*dist - sin(ang)*(l - door_coordinates[0]), y - s*sin(ang)*dist + cos(ang)*( l - door_coordinates[0]), wrap_angle(ang+(1-s)*pi/2), id))
 
-	        side1 = (x + cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates1[0]), y + sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates1[0]), wrap_angle(ang+pi), door_id1+9)
-	        side2 = (x - cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates1[0]), y - sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates1[0]), wrap_angle(ang), door_id1 )
-	        side3 = (x + cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates2[0]), y + sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates2[0]), wrap_angle(ang+pi), door_id2+3)
-	        side4 = (x - cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates2[0]), y - sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates2[0]), wrap_angle(ang), door_id2)
-	        sides = [side1, side2, side3, side4]
+            sorted_sides = sorted(sides, key=lambda pt: (pt[0]-rx)**2 + (pt[1]-ry)**2)
+            self.door_id = sorted_sides[0][3]
+            self.door_coordinates = self.wobj.markers[self.door_id][1]
 
-	        sorted_sides = sorted(sides, key=lambda pt: (pt[0]-rx)**2 + (pt[1]-ry)**2)
-	        self.door_id = sorted_sides[0][3]
-	        self.door_coordinates = self.wobj.markers[self.door_id][1]
+            print("Going to door", self.door_id )
 
-	        print("Going to door", self.door_id )
-
-	        shortest = sorted_sides[0][0:3]
+            shortest = sorted_sides[0][0:3]
 
         else:
-	        side1 = (x + cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates[0]), y + sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates[0]), wrap_angle(ang+pi))
-	        side2 = (x - cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates[0]), y - sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates[0]), wrap_angle(ang))
-	        sides = [side1, side2]
+            side1 = (x + cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates[0]), y + sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates[0]), wrap_angle(ang+pi))
+            side2 = (x - cos(ang)*dist - sin(ang)*(self.wobj.length/2 - door_coordinates[0]), y - sin(ang)*dist + cos(ang)*( self.wobj.length/2 - door_coordinates[0]), wrap_angle(ang))
+            sides = [side1, side2]
 
-        	sorted_sides = sorted(sides, key=lambda pt: (pt[0]-rx)**2 + (pt[1]-ry)**2)
+            sorted_sides = sorted(sides, key=lambda pt: (pt[0]-rx)**2 + (pt[1]-ry)**2)
 
-        	shortest = sorted_sides[0]
+            shortest = sorted_sides[0]
 
         return shortest
 
@@ -137,7 +139,7 @@ class GoToWall(StateNode):
             cube = self.parent.object
             door_id = self.parent.door_id
             if door_id not in self.robot.world.aruco.seen_marker_ids:
-                print('** TurnToWall could not see the Door.')
+                #print('** TurnToWall could not see the Door.')
                 self.angle = Angle(degrees=0)
                 super().start(event)
                 self.post_failure()
@@ -167,7 +169,7 @@ class GoToWall(StateNode):
                 if abs(self.angle) < 2:
                     self.angle = 0
                 self.angle = Angle(degrees=self.angle)
-                print("TurnToWall", self.angle)
+                #print("TurnToWall", self.angle)
                 super().start(event)
 
 
@@ -212,7 +214,7 @@ class GoToWall(StateNode):
             if self.running: return
             door_id = self.parent.door_id
             if door_id not in self.robot.world.aruco.seen_marker_ids:
-                print('Looking higher for wall')
+                #print('Looking higher for wall')
                 if self.robot.head_angle.degrees < 40:
                     self.angle = Angle(self.robot.head_angle.radians + 0.15)
                     super().start(event)
@@ -266,8 +268,9 @@ class Explore(StateNode):
         def start(self,event=None):
             super().start(event)
             for key, val in self.robot.world.world_map.objects.items():
-            	if isinstance(val,WallObj) and val.id not in self.parent.done_wall:
-            		self.parent.to_do_wall.append(val)
+                if isinstance(val,WallObj) and val.id not in self.parent.done_wall and val.id not in self.parent.to_do_wall:
+                    self.parent.to_do_wall.append(val)
+                    print(val.id)
 
             if len(self.parent.to_do_wall) > 0:
             	wall = self.parent.to_do_wall.pop()
@@ -288,9 +291,6 @@ class Explore(StateNode):
             self.door_id = -1
             super().start(event)
 
-
-
-
     $setup{
         look: LookAroundInPlace(stop_on_exit=False) =T(5)=> StopBehavior() =C=> think
 
@@ -301,4 +301,18 @@ class Explore(StateNode):
         go: self.Go() =C=> look
 
         end: Say("Done") =C=> ParentCompletes()
+    }
+
+class DriveSquare(StateNode):
+
+    def __init__(self):
+        super().__init__()
+
+    $setup{
+        start: Forward(100) =C=> Turn(90) =C=> one
+        one:  Forward(100) =C=> Turn(90) =C=> two
+        two:  Forward(100) =C=> Turn(90) =C=> three
+        three:  Forward(100) =C=> Turn(90) =C=> end
+
+        end:  ParentCompletes()
     }

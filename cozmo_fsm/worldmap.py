@@ -5,6 +5,7 @@ from cozmo.objects import CustomObject, LightCube
 from . import transform
 from .transform import wrap_angle
 import cv2
+from pdb import set_trace
 
 
 class WorldObject():
@@ -19,7 +20,7 @@ class WorldObject():
 
 class WallObj(WorldObject):
     def __init__(self, id=None, x=0, y=0, theta=0, length=100, height=150,
-                 door_width=75, door_height=105, markers=[]):
+                 door_width=75, door_height=105, markers=[], door_ids=[]):
         super().__init__(id,x,y)
         self.z = height/2
         self.theta = theta
@@ -28,6 +29,12 @@ class WallObj(WorldObject):
         self.door_width = door_width
         self.door_height = door_height
         self.markers = markers
+        self.door_ids = door_ids
+
+    def update(self,x=0, y=0, theta=0):
+        self.x = x
+        self.y = y
+        self.theta = theta
 
     def __repr__(self):
         return '<WallObj %d: (%.1f,%.1f) @ %d deg. for %.1f>' % \
@@ -36,6 +43,11 @@ class WallObj(WorldObject):
 class MarkerObj(WorldObject):
     def __init__(self, id=None, x=0, y=0):
         super().__init__(id,x,y)
+
+    def update(self,x=0, y=0, theta=0):
+        self.x = x
+        self.y = y
+        self.theta = theta
 
     def __repr__(self):
         return '<MarkerObj %d: (%.1f,%.1f)' % \
@@ -101,7 +113,7 @@ class FaceObj(WorldObject):
 
 class CameraObj(WorldObject):
     camera_size = (44., 44., 44.)
-    def __init__(self, name='NULL', id=None, x=0, y=0, z=0, theta=0, phi = 0, rotm = None, tvecs = None, calibration_number= None):
+    def __init__(self, name='NULL', id=None, x=0, y=0, z=0, theta=0, phi = 0, rotm = None, tvecs = None, calibration_number= -1):
         super().__init__(id,x,y,z)
         self.size = self.camera_size
         self.id = id
@@ -114,6 +126,13 @@ class CameraObj(WorldObject):
         self.rotm = rotm
         self.tvecs = tvecs
         self.calibration_number=calibration_number
+
+    def update(self,x=0, y=0, z=0, theta = 0, phi = 0):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.theta = theta
+        self.phi = phi
 
     def __repr__(self):
         return '<CameraObj %d: (%.1f, %.1f, %.1f) @ %f.> Calibrated on %d\n' % \
@@ -138,7 +157,7 @@ class WallGhostObj(WorldObject):
                (self.id, self.x, self.y, self.theta*180/pi, self.length, self.calibration_number)
 
 class RobotGhostObj(WorldObject):
-    def __init__(self, camera_id=None, name = 'NULL', cozmo_id=None, x=0, y=0, z=0, theta=0, is_visible=True, uncertainity=0, calibration_number = 1):
+    def __init__(self, camera_id=1, name = 'NULL', cozmo_id=None, x=0, y=0, z=0, theta=0, is_visible=True, uncertainity=0, calibration_number = 1):
         super().__init__(id,x,y,z)
         self.camera_id = camera_id
         self.name = name
@@ -192,10 +211,6 @@ class WorldMap():
         self.robot = robot
         self.objects = dict()
         self.shared_objects = dict()
-        self.temp_cams = dict()
-        self.temp_cubes = dict()
-        self.temp_walls = dict()
-        self.temp_ghosts = dict(dict())
         
     def update_map(self):
         """Called to update the map just before the path planner runs.  Cubes,
@@ -203,7 +218,7 @@ class WorldMap():
         to observation events, but we update them here to get the
         freshest possible value.  Walls must be generated fresh as
         they have no observation events."""
-        self.generate_walls_from_markers()
+        self.update_walls()
         self.update_perched_cameras()
         for (id,cube) in self.robot.world.light_cubes.items():
             self.update_cube(cube)
@@ -211,17 +226,24 @@ class WorldMap():
             self.update_face(face)
 
     def update_perched_cameras(self):
-        for key, val in self.robot.world.particle_filter.sensor_model.landmarks.items():
-            if isinstance(key, type(cv2.VideoCapture(100))):
-                self.objects[str(key)]= CameraObj(id=1, x=val[0][0,0], y=val[0][1,0], z=val[1])
+        for key, val in self.robot.world.server.landmark_pool[self.robot.aruco_id].items():
+            if isinstance(key,str) and 'Video' in key:
+                if key in self.objects:
+                    self.objects[key].update(x=val[0][0,0], y=val[0][1,0], z=val[1][0], theta=val[1][2], phi =val[1][1])
+                else:
+                    self.objects[key]= CameraObj(id=1, x=val[0][0,0], y=val[0][1,0], z=val[1][0], theta= val[1][2], phi =val[1][1] )
 
-    def generate_walls_from_markers(self):
+    def update_walls(self):
         for key, value in self.robot.world.particle_filter.sensor_model.landmarks.items():
-            if isinstance(key,str):
-                id = int(key[-(len(key)-5):])
-                wall_spec = wall_marker_dict[id]
-                self.objects[key] = WallObj(id, x=value[0][0][0], y=value[0][1][0], theta=value[1], length=wall_spec.length, height=wall_spec.height,
-                 door_width=wall_spec.door_width, door_height=wall_spec.door_height, markers=wall_spec.markers)
+            if isinstance(key,str) and 'Wall' in key:
+                if key in self.objects and isinstance(self.objects[key], WallObj):
+                    self.objects[key].update(x=value[0][0][0], y=value[0][1][0], theta=value[1])
+                    #print(value[1]*180/pi)
+                else:
+                    id = int(key[-(len(key)-5):])
+                    wall_spec = wall_marker_dict[id]
+                    self.objects[key] = WallObj(id, x=value[0][0][0], y=value[0][1][0], theta=value[1], length=wall_spec.length, height=wall_spec.height,
+                 door_width=wall_spec.door_width, door_height=wall_spec.door_height, markers=wall_spec.markers, door_ids = wall_spec.door_ids)
             
     def update_cube(self, cube):
         if cube in self.objects:
@@ -323,13 +345,14 @@ wall_marker_dict = dict()
 
 class WallSpec():
     def __init__(self, length=100, height=210, door_width=75, door_height=105,
-                 markers={}, doorways=[]):
+                 markers={}, doorways=[], door_ids=[]):
         self.length = length
         self.height = height
         self.door_width = door_width
         self.door_height = door_height
         self.markers = markers
         self.doorways = doorways
+        self.door_ids = door_ids
         ids = list(markers.keys())
         self.id = min(ids)
         global wall_marker_dict
