@@ -562,6 +562,7 @@ class SLAMParticle(Particle):
     sigma_phi = 15 * (pi/180)         # find right values
     sigma_theta =  (pi/180)
     sigma_z = 50
+    # Change name to landmarksensor_variance_Qt and camera_sensor_variance_Qt
     sensor_variance_Qt = np.array([[sigma_r**2, 0             , 0],
                                    [0         , sigma_alpha**2, 0],
                                    [0         , 0             , sigma_phi**2]])
@@ -724,6 +725,7 @@ class SLAMSensorModel(SensorModel):
 
         an = self.rotationMatrixToEulerAngles(rotationm)
         #wall_orient = wrap_angle(s*(an[1]+an[2]))   # Unstable, fix later
+        # euler angle flip when back of wall is seen
         if an[2] > pi/2:
             wall_orient = wrap_angle(-(an[1]-pi))
         elif an[2] >= -pi/2 and an[2] <= pi/2:

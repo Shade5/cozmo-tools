@@ -25,6 +25,7 @@ class Perched_cams(threading.Thread):
         self.robot = robot
         self.use_perched_cameras=False
         self.cameras = []
+        # Special case make live_cam matrix
         self.cameraMatrix = matrix([[1148.00,       -3,    641.0],
                                        [0.000000,   1145.0,    371.0],
                                        [0.000000, 0.000000, 1.000000]])
@@ -64,8 +65,10 @@ class Perched_cams(threading.Thread):
         return array([x, y, z])
 
     def process_image(self):
+        # Dict with key: aruco id with values as cameras that can see the marker
         self.temp_cams = {}     # Necessary, else self.cams is empty most of the time
         for cap in self.cameras:
+            # Clearing Buffer by grabbing five frames
             for i in range(5):
                 cap.grab()
             ret, frame = cap.read()
@@ -73,17 +76,17 @@ class Perched_cams(threading.Thread):
             corners, ids, rejectedImgPoints = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.parameters)
 
             if type(ids) is ndarray: # and self.comzo_aruco in ids:
+
                 vecs = aruco.estimatePoseSingleMarkers(corners, 50, self.cameraMatrix, self.distCoeffs)
                 rvecs, tvecs = vecs[0], vecs[1]
                 for i in range(len(ids)):
                     rotationm, jcob = cv2.Rodrigues(rvecs[i])
                     transformed = matrix(rotationm).T*(-matrix(tvecs[i]).T)
-                    phi = self.rotationMatrixToEulerAngles(rotationm)
-                    theta = self.rotationMatrixToEulerAngles(rotationm.T)[0]
+                    phi = self.rotationMatrixToEulerAngles(rotationm.T)
                     if ids[i][0] in self.temp_cams:
-                        self.temp_cams[ids[i][0]][str(cap)]=Cam(str(cap),transformed[0][0,0],transformed[1][0,0],transformed[2][0,0],wrap_angle(phi[2]-pi/2), wrap_angle(theta+pi/2))
+                        self.temp_cams[ids[i][0]][str(cap)]=Cam(str(cap),transformed[0][0,0],transformed[1][0,0],transformed[2][0,0],wrap_angle(phi[2]-pi/2), wrap_angle(phi[0]+pi/2))
                     else:
-                        self.temp_cams[ids[i][0]]={str(cap):Cam(str(cap),transformed[0][0,0],transformed[1][0,0],transformed[2][0,0],wrap_angle(phi[2]-pi/2), wrap_angle(theta+pi/2))}
+                        self.temp_cams[ids[i][0]]={str(cap):Cam(str(cap),transformed[0][0,0],transformed[1][0,0],transformed[2][0,0],wrap_angle(phi[2]-pi/2), wrap_angle(phi[0]+pi/2))}
         self.cams = self.temp_cams
         if self.robot.world.is_server:
             self.pool = self.temp_cams

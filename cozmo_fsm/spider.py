@@ -1,3 +1,4 @@
+# sharedmap.py
 import cv2
 import socket
 import pickle
@@ -6,7 +7,9 @@ from pdb import set_trace
 from time import sleep
 from numpy import inf, arctan2, pi, cos, sin
 from .worldmap import RobotGhostObj
+from .transform import wrap_angle
 
+# ServerThread
 class Server(threading.Thread):
     def __init__(self, robot, port=1800):
         threading.Thread.__init__(self)
@@ -35,6 +38,7 @@ class Server(threading.Thread):
             self.threads.append(Spawn(i, c, self.robot))
             self.threads[i].start()
 
+# ClientHandlerThread
 class Spawn(threading.Thread):
     def __init__(self, threadID, client, robot):
         threading.Thread.__init__(self)
@@ -44,6 +48,7 @@ class Spawn(threading.Thread):
         self.c.sendall(pickle.dumps("Hello"))
         self.aruco_id = int(pickle.loads(self.c.recv(1024)))
         self.name = "Client-"+str(self.aruco_id)
+        # change to camera_landmark_pool
         self.robot.world.server.landmark_pool[self.aruco_id]={}
         print("Started thread for",self.name)
 
@@ -66,6 +71,7 @@ class Spawn(threading.Thread):
             self.robot.world.server.landmark_pool[self.aruco_id].update(landmarks)
             self.robot.world.server.poses[self.aruco_id] = pose
 
+# FusionThread
 class Fusion(threading.Thread):
     def __init__(self, robot):
         threading.Thread.__init__(self)
@@ -78,6 +84,7 @@ class Fusion(threading.Thread):
         while(True):
             self.robot.world.server.landmark_pool[self.aruco_id].update({k:self.robot.world.particle_filter.sensor_model.landmarks[k] for k in [x for x in self.robot.world.particle_filter.sensor_model.landmarks.keys() if isinstance(x,str) and "Video" in x]})
 
+            flag = False
             # Choose accurate camera
             for key1, value1 in self.robot.world.server.landmark_pool.items():
                 for key2, value2 in self.robot.world.server.landmark_pool.items():
@@ -88,19 +95,21 @@ class Fusion(threading.Thread):
                             varsum = lan[2].sum()+value2[cap][2].sum()
                             if varsum < self.accurate.get((key1,key2),(inf,None))[0]:
                                 self.accurate[(key1,key2)] = (varsum,cap)
+                                flag = True
 
             # Find transform
-            for key, value in self.accurate.items():
-                x1,y1 = self.robot.world.server.landmark_pool[key[0]][value[1]][0]
-                h1,p1 = self.robot.world.server.landmark_pool[key[0]][value[1]][1]
-                x2,y2 = self.robot.world.server.landmark_pool[key[1]][value[1]][0]
-                h2,p2 = self.robot.world.server.landmark_pool[key[1]][value[1]][1]
+            if flag:
+                for key, value in self.accurate.items():
+                    x1,y1 = self.robot.world.server.landmark_pool[key[0]][value[1]][0]
+                    h1,p1,t1 = self.robot.world.server.landmark_pool[key[0]][value[1]][1]
+                    x2,y2 = self.robot.world.server.landmark_pool[key[1]][value[1]][0]
+                    h2,p2,t2 = self.robot.world.server.landmark_pool[key[1]][value[1]][1]
+                    theta_t = wrap_angle(p1 - p2)
+                    x_t = x2 - ( x1*cos(theta_t) + y1*sin(theta_t))
+                    y_t = y2 - (-x1*sin(theta_t) + y1*cos(theta_t))
 
-                theta_t = (p1 - p2)
-                x_t = x2 - ( x1*cos(theta_t) + y1*sin(theta_t))
-                y_t = y2 - (-x1*sin(theta_t) + y1*cos(theta_t))
-
-                self.transforms[key] = (x_t, y_t, theta_t)
+                    self.transforms[key] = (x_t, y_t, theta_t)
+                    #print("Added transform:",key,":",self.transforms[key] )
 
             self.update_ghosts()
             sleep(0.01)
@@ -112,8 +121,9 @@ class Fusion(threading.Thread):
                 x, y, theta = self.robot.world.server.poses[key[0]]
                 x2 =  x*cos(theta_t) + y*sin(theta_t) + x_t 
                 y2 = -x*sin(theta_t) + y*cos(theta_t) + y_t 
-                self.robot.world.world_map.objects["Ghost-"+str(key[0])]=RobotGhostObj(cozmo_id=key[0], x=x2, y=y2, z=0, theta=theta-theta_t, is_visible=True,)
+                self.robot.world.world_map.objects["Ghost-"+str(key[0])]=RobotGhostObj(cozmo_id=key[0], x=x2, y=y2, z=0, theta=wrap_angle(theta-theta_t), is_visible=True,)
 
+# Change to ClientThread
 class Client(threading.Thread):
     def __init__(self, robot):
         threading.Thread.__init__(self)
